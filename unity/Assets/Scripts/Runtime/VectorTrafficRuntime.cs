@@ -3,9 +3,8 @@ using System.Collections.Generic;
 using UnityEngine;
 using VectorTraffic3D.Board;
 using VectorTraffic3D.Core;
-using VectorTraffic3D.Gates;
-using VectorTraffic3D.Vehicles;
 using VectorTraffic3D.Puzzle;
+
 namespace VectorTraffic3D.Runtime
 {
     public sealed class VectorTrafficRuntime : MonoBehaviour
@@ -15,78 +14,167 @@ namespace VectorTraffic3D.Runtime
         [SerializeField] private int height = 7;
         [SerializeField] private float cellSize = 1.5f;
         [SerializeField] private int seed = 20260929;
+
         [Header("Movement")]
         [SerializeField] private float moveDuration = .18f;
         [SerializeField] private float exitDuration = .12f;
+
         public BoardState Board { get; private set; }
+
         private GridWorldMapper _mapper;
         private readonly Dictionary<int, VehicleView> _views = new();
+        private readonly Dictionary<int, VectorGateView> _gateViews = new();
         private Camera _camera;
+        private RuntimeInputController _input;
+        private RuntimeCameraController _cameraController;
         private int _selectedVehicle = -1;
-        private Vector2 _pointerDown;
-        private float _pointerDownTime;
         private bool _busy;
+        private Transform _worldRoot;
         private Transform _vehiclesRoot;
-        private const float SwipePixels = 30f;
+        private Transform _focus;
+
         private void Start()
         {
-            BuildDemoLevel();
+            BuildLevel();
             BuildWorld();
+            BuildInput();
         }
-        private void Update()
+
+        private void BuildLevel()
         {
-            if (_busy) return;
-            if (Input.GetMouseButtonDown(0))
+            Board = RuntimeLevelFactory.Create(seed, width, height);
+
+            if (!Board.TryValidateStaticState(out var error))
+                Debug.LogError($"Runtime level rejected: {error}");
+        }
+
+        private void BuildWorld()
+        {
+            _worldRoot = new GameObject("World").transform;
+            _mapper = new GridWorldMapper(
+                cellSize,
+                new Vector3(-(width - 1) * cellSize * .5f, 0f,
+                    -(height - 1) * cellSize * .5f));
+
+            CreateGround();
+            CreateCamera();
+
+            var visualBuilder = new BoardVisualBuilder(_mapper, _worldRoot);
+            visualBuilder.Build(Board);
+
+            _vehiclesRoot = new GameObject("Vehicles").transform;
+            _vehiclesRoot.SetParent(_worldRoot, false);
+
+            foreach (var state in Board.Vehicles.Values)
             {
-                _pointerDown = Input.mousePosition;
-                _pointerDownTime = Time.unscaledTime;
+                var view = VehicleView.Create(_vehiclesRoot, state, _mapper);
+                view.SyncImmediate(state);
+                _views[state.Id] = view;
             }
-            if (Input.GetMouseButtonUp(0))
+
+            foreach (var gate in Board.Gates.Values)
             {
-                var delta = (Vector2)Input.mousePosition - _pointerDown;
-                var view = RaycastVehicle(Input.mousePosition);
-                if (view != null) _selectedVehicle = view.VehicleId;
-                if (_selectedVehicle < 0) return;
-                Direction direction = delta.magnitude < SwipePixels
-                    ? Board.Vehicles[_selectedVehicle].CurrentVector
+                var gateView = _worldRoot.GetComponentInChildren<VectorGateView>();
+                if (gateView != null && gateView.GateId == gate.Id)
+                    _gateViews[gate.Id] = gateView;
+            }
+
+            _focus = new GameObject("CameraFocus").transform;
+            _focus.SetParent(_worldRoot, false);
+            _focus.position = Vector3.zero;
+            _cameraController.Initialize(_camera, _focus);
+        }
+
+        private void BuildInput()
+        {
+            _input = gameObject.GetComponent<RuntimeInputController>();
+            if (_input == null) _input = gameObject.AddComponent<RuntimeInputController>();
+            _input.PointerReleased += OnPointerReleased;
+        }
+
+        private void OnDestroy()
+        {
+            if (_input != null)
+                _input.PointerReleased -= OnPointerReleased;
+        }
+
+        private void OnPointerReleased(Vector2 start, Vector2 end)
+        {
+            if (_busy || _camera == null) return;
+
+            var view = RaycastVehicle(end);
+            if (view != null)
+            {
+                SelectVehicle(view.VehicleId);
+                var delta = end - start;
+                var direction = delta.magnitude < 30f
+                    ? Board.Vehicles[view.VehicleId].CurrentVector
                     : ScreenDeltaToDirection(delta);
-                StartCoroutine(AttemptMove(_selectedVehicle, direction));
+                StartCoroutine(AttemptMove(view.VehicleId, direction));
+                return;
+            }
+
+            var gateView = RaycastGate(end);
+            if (gateView != null && Board.Gates.TryGetValue(gateView.GateId, out var gate))
+            {
+                gate.CycleDirection();
+                gateView.Refresh(gate.AllowedDirection);
             }
         }
+
+        private void SelectVehicle(int vehicleId)
+        {
+            if (_selectedVehicle == vehicleId) return;
+            if (_selectedVehicle >= 0 && _views.TryGetValue(_selectedVehicle, out var previous))
+                previous.SetSelected(false);
+            _selectedVehicle = vehicleId;
+            if (_views.TryGetValue(vehicleId, out var current))
+                current.SetSelected(true);
+        }
+
         private VehicleView RaycastVehicle(Vector2 screen)
         {
-            if (_camera == null) return null;
-            Ray ray = _camera.ScreenPointToRay(screen);
+            var ray = _camera.ScreenPointToRay(screen);
             if (!Physics.Raycast(ray, out var hit, 500f)) return null;
             return hit.collider.GetComponentInParent<VehicleView>();
         }
+
+        private VectorGateView RaycastGate(Vector2 screen)
+        {
+            var ray = _camera.ScreenPointToRay(screen);
+            if (!Physics.Raycast(ray, out var hit, 500f)) return null;
+            return hit.collider.GetComponentInParent<VectorGateView>();
+        }
+
         private IEnumerator AttemptMove(int vehicleId, Direction direction)
         {
             if (!Board.Vehicles.TryGetValue(vehicleId, out var vehicle)) yield break;
-            if (Board.Exits.ContainsKey(vehicle.HeadPosition))
-            {
-                yield break;
-            }
-            var before = vehicle.Clone();
+            if (vehicle.IsExited) yield break;
+
             if (!MoveValidator.TryExecuteStep(Board, vehicleId, direction, out _, out var result))
             {
                 Debug.Log($"Move blocked: {result}");
                 yield break;
             }
+
             _busy = true;
             yield return _views[vehicleId].AnimateTo(vehicle, moveDuration);
             _busy = false;
+
             if (Board.Exits.ContainsKey(vehicle.HeadPosition))
-                StartCoroutine(AttemptExit(vehicleId));
+                yield return AttemptExit(vehicleId);
         }
+
         private IEnumerator AttemptExit(int vehicleId)
         {
             if (!Board.Vehicles.TryGetValue(vehicleId, out var vehicle)) yield break;
-            if (!MoveValidator.CanCompleteExit(Board, vehicleId, out var footprints, out var failure))
+            if (!MoveValidator.CanCompleteExit(
+                    Board, vehicleId, out var footprints, out var failure))
             {
                 Debug.Log($"Exit blocked: {failure}");
                 yield break;
             }
+
             _busy = true;
             foreach (var footprint in footprints)
             {
@@ -94,76 +182,67 @@ namespace VectorTraffic3D.Runtime
                 vehicle.HeadPosition = footprint[0];
                 yield return _views[vehicleId].AnimateTo(vehicle, exitDuration);
             }
+
             vehicle.IsExited = true;
             _views[vehicleId].gameObject.SetActive(false);
             _busy = false;
-            Debug.Log($"Vehicle {vehicleId} exited.");
+
+            if (Board.IsSolved())
+                Debug.Log("VECTOR TRAFFIC 3D: puzzle solved.");
         }
+
         private Direction ScreenDeltaToDirection(Vector2 delta)
         {
             if (Mathf.Abs(delta.x) > Mathf.Abs(delta.y))
                 return delta.x > 0 ? Direction.Right : Direction.Left;
             return delta.y > 0 ? Direction.Up : Direction.Down;
         }
-        private void BuildDemoLevel()
-        {
-            Board = new BoardState(width, height);
-            for (int x=0;x<width;x++) for (int y=0;y<height;y++)
-                Board.AddRoadNode(new GridPosition(x,y));
-            for (int x=0;x<width;x++) for (int y=0;y<height;y++)
-            {
-                var p=new GridPosition(x,y);
-                if (x+1<width) Board.AddBidirectionalRoadSegment(p,new GridPosition(x+1,y));
-                if (y+1<height) Board.AddBidirectionalRoadSegment(p,new GridPosition(x,y+1));
-            }
-            int mid=height/2;
-            Board.AddExit(new GridPosition(width-1,mid),1);
-            Board.AddExit(new GridPosition(0,mid),2);
-            Board.AddVehicle(new VehicleState(1,VehicleType.Sedan,new GridPosition(2,mid),Direction.Right,Direction.Right,1));
-            Board.AddVehicle(new VehicleState(2,VehicleType.SUV,new GridPosition(5,mid-2),Direction.Up,Direction.Up,1));
-            Board.AddVehicle(new VehicleState(3,VehicleType.Hatchback,new GridPosition(3,mid+2),Direction.Down,Direction.Down,2));
-            Board.AddGate(new VectorGate(1,new GridPosition(4,mid),Direction.Right));
-            if (!Board.TryValidateStaticState(out var error)) Debug.LogError($"Demo level invalid: {error}");
-        }
-        private void BuildWorld()
-        {
-            _mapper = new GridWorldMapper(cellSize, new Vector3(-(width-1)*cellSize*.5f,0f,-(height-1)*cellSize*.5f));
-            CreateCamera();
-            CreateGround();
-            _vehiclesRoot = new GameObject("Vehicles").transform;
-            foreach (var state in Board.Vehicles.Values)
-            {
-                var view = VehicleView.Create(_vehiclesRoot,state,_mapper);
-                view.SyncImmediate(state);
-                _views[state.Id]=view;
-            }
-        }
+
         private void CreateGround()
         {
-            var go=GameObject.CreatePrimitive(PrimitiveType.Cube);
-            go.name="RoadBase";
-            go.transform.position=new Vector3(0,-.25f,0);
-            go.transform.localScale=new Vector3(width*cellSize,.5f,height*cellSize);
-            go.GetComponent<Renderer>().material=MakeMaterial(new Color(.11f,.13f,.16f));
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = "DioramaBase";
+            go.transform.SetParent(_worldRoot, false);
+            go.transform.position = new Vector3(0f, -.25f, 0f);
+            go.transform.localScale = new Vector3(
+                width * cellSize + .8f, .5f, height * cellSize + .8f);
+            go.GetComponent<Renderer>().material =
+                MakeMaterial(new Color(.07f, .08f, .1f));
         }
+
         private void CreateCamera()
         {
-            var go=new GameObject("Main Camera");
-            _camera=go.AddComponent<Camera>();
-            go.tag="MainCamera";
-            go.transform.position=new Vector3(0,Mathf.Max(width,height)*1.25f,-Mathf.Max(width,height)*.55f);
-            go.transform.rotation=Quaternion.Euler(52f,0f,0f);
-            _camera.fieldOfView=45f;
-            var light=new GameObject("Key Light");
-            var dl=light.AddComponent<Light>();
-            dl.type=LightType.Directional;
-            dl.intensity=1.15f;
-            light.transform.rotation=Quaternion.Euler(50f,-30f,0f);
+            var cameraObject = new GameObject("Main Camera");
+            cameraObject.transform.SetParent(_worldRoot, false);
+            _camera = cameraObject.AddComponent<Camera>();
+            _camera.tag = "MainCamera";
+            _camera.fieldOfView = 45f;
+            _camera.nearClipPlane = .05f;
+            _camera.farClipPlane = 100f;
+
+            var lightObject = new GameObject("Key Light");
+            lightObject.transform.SetParent(_worldRoot, false);
+            var light = lightObject.AddComponent<Light>();
+            light.type = LightType.Directional;
+            light.intensity = 1.15f;
+            light.shadows = LightShadows.Soft;
+            lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+
+            var fillObject = new GameObject("Fill Light");
+            fillObject.transform.SetParent(_worldRoot, false);
+            var fill = fillObject.AddComponent<Light>();
+            fill.type = LightType.Directional;
+            fill.intensity = .35f;
+            fillObject.transform.rotation = Quaternion.Euler(25f, 145f, 0f);
+
+            _cameraController = cameraObject.AddComponent<RuntimeCameraController>();
         }
+
         private static Material MakeMaterial(Color color)
         {
-            var m=new Material(Shader.Find("Universal Render Pipeline/Lit"));
-            m.color=color; return m;
+            var material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            material.color = color;
+            return material;
         }
     }
 }
