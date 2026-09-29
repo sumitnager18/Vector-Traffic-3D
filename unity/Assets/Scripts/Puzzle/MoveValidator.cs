@@ -161,6 +161,9 @@ namespace VectorTraffic3D.Puzzle
             if (!board.Vehicles.TryGetValue(vehicleId, out var vehicle) || vehicle.IsExited)
                 return Array.Empty<Direction>();
 
+            if (board.Exits.ContainsKey(vehicle.HeadPosition))
+                return Array.Empty<Direction>();
+
             var occupancy = new OccupancySystem(board.Width, board.Height);
             if (!occupancy.TryRebuildOccupancy(board.Vehicles.Values, board.Gates.Values, out _))
                 return Array.Empty<Direction>();
@@ -192,6 +195,12 @@ namespace VectorTraffic3D.Puzzle
             if (!board.Vehicles.ContainsKey(vehicleId))
             {
                 result = MoveResult.VehicleNotFound;
+                return false;
+            }
+
+            if (board.Exits.ContainsKey(board.Vehicles[vehicleId].HeadPosition))
+            {
+                result = MoveResult.ValidExitCompleted;
                 return false;
             }
 
