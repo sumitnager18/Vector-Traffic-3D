@@ -46,7 +46,7 @@ namespace VectorTraffic3D.Vehicles
         {
             return new VehicleState(Id, Type, HeadPosition, Orientation, CurrentVector, DestinationId, Length)
             {
-                IsExited = this.IsExited
+                IsExited = IsExited
             };
         }
 
@@ -54,6 +54,10 @@ namespace VectorTraffic3D.Vehicles
         {
             if (other is null) return false;
             return Id == other.Id &&
+                   Type == other.Type &&
+                   Length == other.Length &&
+                   Width == other.Width &&
+                   DestinationId == other.DestinationId &&
                    HeadPosition == other.HeadPosition &&
                    Orientation == other.Orientation &&
                    CurrentVector == other.CurrentVector &&
@@ -64,7 +68,7 @@ namespace VectorTraffic3D.Vehicles
 
         public override int GetHashCode()
         {
-            return HashCode.Combine(Id, HeadPosition, Orientation, CurrentVector, IsExited);
+            return HashCode.Combine(Id, Type, Length, DestinationId, HeadPosition, Orientation, CurrentVector, IsExited);
         }
     }
 }
