@@ -11,40 +11,51 @@ namespace VectorTraffic3D.Tests
     public class DeterministicSolverTests
     {
         [Test]
-        public void Solve_SingleVehiclePuzzle_SolvesInOneStep()
+        public void Solve_SingleVehiclePuzzle_UsesExplicitMovementThenExit()
         {
             var board = new BoardState(5, 5);
             board.AddExit(new GridPosition(4, 2), 0);
 
-            var v1 = new VehicleState(1, VehicleType.Hatchback, new GridPosition(3, 2), Direction.Right, Direction.Right);
+            var v1 = new VehicleState(
+                1,
+                VehicleType.Hatchback,
+                new GridPosition(3, 2),
+                Direction.Right,
+                Direction.Right);
             board.AddVehicle(v1);
 
             var solver = new DeterministicSolver();
             var result = solver.Solve(board);
 
             Assert.IsTrue(result.IsSolvable);
-            Assert.AreEqual(1, result.SolutionDepth);
+            Assert.AreEqual(2, result.SolutionDepth);
             Assert.AreEqual(1, result.Steps[0].VehicleId);
+            Assert.IsFalse(result.Steps[0].IsExitAction);
+            Assert.AreEqual(1, result.Steps[1].VehicleId);
+            Assert.IsTrue(result.Steps[1].IsExitAction);
         }
 
         [Test]
-        public void Solve_DependencyChainPuzzle_SolvesInCorrectSequence()
+        public void Solve_DependencyChainPuzzle_UsesIntermediateStates()
         {
-            // Level: Vehicle 1 (Bus, 4 cells) blocks Vehicle 2 (Hatchback, 2 cells).
-            // Vehicle 1 must clear first so Vehicle 2 can reach its exit.
             var board = new BoardState(7, 7);
 
-            // Exit for V1 at top (3, 6)
             board.AddExit(new GridPosition(3, 6), 0);
-            // Exit for V2 at right (6, 2)
             board.AddExit(new GridPosition(6, 2), 0);
 
-            // V1 (Bus) at (3, 4) pointing Up (occupies (3,4), (3,3), (3,2), (3,1))
-            var v1 = new VehicleState(1, VehicleType.Bus, new GridPosition(3, 4), Direction.Up, Direction.Up);
+            var v1 = new VehicleState(
+                1,
+                VehicleType.Bus,
+                new GridPosition(3, 4),
+                Direction.Up,
+                Direction.Up);
 
-            // V2 (Hatchback) at (2, 2) pointing Right (occupies (2,2), (1,2))
-            // Notice: V2 needs to cross (3, 2) which is occupied by V1's body!
-            var v2 = new VehicleState(2, VehicleType.Hatchback, new GridPosition(2, 2), Direction.Right, Direction.Right);
+            var v2 = new VehicleState(
+                2,
+                VehicleType.Hatchback,
+                new GridPosition(2, 2),
+                Direction.Right,
+                Direction.Right);
 
             board.AddVehicle(v1);
             board.AddVehicle(v2);
@@ -53,32 +64,77 @@ namespace VectorTraffic3D.Tests
             var result = solver.Solve(board);
 
             Assert.IsTrue(result.IsSolvable);
-            Assert.AreEqual(2, result.SolutionDepth);
-            Assert.AreEqual(1, result.Steps[0].VehicleId); // V1 must exit first
-            Assert.AreEqual(2, result.Steps[1].VehicleId); // V2 can now exit
+            Assert.AreEqual(8, result.SolutionDepth);
+
+            Assert.AreEqual(1, result.Steps[0].VehicleId);
+            Assert.AreEqual(1, result.Steps[1].VehicleId);
+            Assert.AreEqual(1, result.Steps[2].VehicleId);
+            Assert.IsTrue(result.Steps[2].IsExitAction);
+
+            Assert.AreEqual(2, result.Steps[3].VehicleId);
+            Assert.AreEqual(2, result.Steps[7].VehicleId);
+            Assert.IsTrue(result.Steps[7].IsExitAction);
         }
 
         [Test]
-        public void Solve_VectorGatePuzzle_CyclesGateThenExits()
+        public void Solve_VectorGatePuzzle_CyclesGateThenTraversesThenExits()
         {
             var board = new BoardState(6, 6);
             board.AddExit(new GridPosition(5, 2), 0);
+            board.AddGate(new VectorGate(
+                1,
+                new GridPosition(4, 2),
+                Direction.Up));
 
-            // Gate at (4, 2) initially pointing Up (blocks Right-facing vehicle)
-            board.AddGate(new VectorGate(1, new GridPosition(4, 2), Direction.Up));
-
-            // Vehicle at (3, 2) pointing Right
-            var v = new VehicleState(1, VehicleType.Hatchback, new GridPosition(3, 2), Direction.Right, Direction.Right);
+            var v = new VehicleState(
+                1,
+                VehicleType.Hatchback,
+                new GridPosition(3, 2),
+                Direction.Right,
+                Direction.Right);
             board.AddVehicle(v);
 
             var solver = new DeterministicSolver();
             var result = solver.Solve(board);
 
             Assert.IsTrue(result.IsSolvable);
-            // Must cycle gate Up -> Right, then vehicle exits!
-            Assert.AreEqual(2, result.SolutionDepth);
+            Assert.AreEqual(4, result.SolutionDepth);
             Assert.AreEqual(1, result.Steps[0].ToggledGateId);
-            Assert.AreEqual(1, result.Steps[1].VehicleId);
+            Assert.IsFalse(result.Steps[1].IsExitAction);
+            Assert.IsFalse(result.Steps[2].IsExitAction);
+            Assert.IsTrue(result.Steps[3].IsExitAction);
+        }
+
+        [Test]
+        public void Solve_RouteGraphRequiresIntermediateTurn()
+        {
+            var board = new BoardState(6, 6);
+
+            board.AddBidirectionalRoadSegment(
+                new GridPosition(0, 1),
+                new GridPosition(1, 1));
+            board.AddBidirectionalRoadSegment(
+                new GridPosition(1, 1),
+                new GridPosition(1, 2));
+            board.AddBidirectionalRoadSegment(
+                new GridPosition(1, 2),
+                new GridPosition(1, 3));
+            board.AddExit(new GridPosition(1, 3), 0);
+
+            var v = new VehicleState(
+                1,
+                VehicleType.Hatchback,
+                new GridPosition(1, 1),
+                Direction.Right,
+                Direction.Up);
+
+            board.AddVehicle(v);
+
+            var solver = new DeterministicSolver();
+            var result = solver.Solve(board);
+
+            Assert.IsTrue(result.IsSolvable);
+            Assert.GreaterOrEqual(result.SolutionDepth, 3);
         }
     }
 }

@@ -21,7 +21,7 @@ PlayerSettings:
   bundleVersion: 0.1.0
   AndroidBundleVersionCode: 1
   AndroidMinSdkVersion: 24
-  AndroidTargetSdkVersion: 34
+  AndroidTargetSdkVersion: 36
   AndroidPreferredInstallLocation: 1
   AndroidArchitecture: 3
   scriptingBackend:

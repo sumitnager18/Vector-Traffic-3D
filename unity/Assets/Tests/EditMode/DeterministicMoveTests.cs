@@ -1,3 +1,4 @@
+using System.Linq;
 using NUnit.Framework;
 using VectorTraffic3D.Board;
 using VectorTraffic3D.Core;
