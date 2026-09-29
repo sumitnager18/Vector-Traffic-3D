@@ -1,0 +1,6 @@
+{
+  "name": "Vector Traffic 3D",
+  "description": "Original stylized 3D mobile traffic-routing puzzle game engine, deterministic solver, and Unity 6 URP architecture.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

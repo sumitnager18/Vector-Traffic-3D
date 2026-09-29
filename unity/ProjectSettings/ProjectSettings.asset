@@ -1,0 +1,32 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!129 &1
+PlayerSettings:
+  m_ObjectHideFlags: 0
+  serializedVersion: 26
+  productGUID: a763f91b48b7463f829d10e53a1a09dc
+  AndroidProfiler: 0
+  AndroidFilteringQuality: 1
+  defaultScreenOrientation: 3
+  targetDevice: 2
+  useOnDemandResources: 0
+  accelerometerFrequency: 60
+  companyName: VectorTrafficStudio
+  productName: Vector Traffic 3D
+  defaultCursor: {fileID: 0}
+  cursorHotspot: {x: 0, y: 0}
+  m_SplashScreenBackgroundColor: {r: 0.1176, g: 0.1333, b: 0.1607, a: 1}
+  applicationIdentifier:
+    Android: com.vectortraffic3d.game
+  bundleVersion: 0.1.0
+  AndroidBundleVersionCode: 1
+  AndroidMinSdkVersion: 24
+  AndroidTargetSdkVersion: 34
+  AndroidPreferredInstallLocation: 1
+  AndroidArchitecture: 3
+  scriptingBackend:
+    Android: 1
+  il2cppCompilerConfiguration:
+    Android: 1
+  managedStrippingLevel:
+    Android: 1
