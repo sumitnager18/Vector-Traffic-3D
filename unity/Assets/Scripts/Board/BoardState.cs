@@ -131,7 +131,7 @@ namespace VectorTraffic3D.Board
                 }
                 else
                 {
-                    sb.Append($"V{v.Id}:{v.HeadPosition.X},{v.HeadPosition.Y}:O{(int)v.Orientation}:L{v.Length}:V{(int)v.CurrentVector}:D{v.DestinationId};");
+                    sb.Append($"V{v.Id}:{v.HeadPosition.X},{v.HeadPosition.Y}:T{(int)v.Type}:O{(int)v.Orientation}:L{v.Length}:W{v.Width}:V{(int)v.CurrentVector}:D{v.DestinationId};");
                 }
             }
 
