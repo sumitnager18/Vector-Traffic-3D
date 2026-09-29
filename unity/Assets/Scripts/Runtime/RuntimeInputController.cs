@@ -25,7 +25,7 @@ namespace VectorTraffic3D.Runtime
                     End(touch.position.ReadValue());
             }
 
-            if (Mouse.current != null)
+            if (Touchscreen.current == null && Mouse.current != null)
             {
                 if (Mouse.current.leftButton.wasPressedThisFrame)
                     Begin(Mouse.current.position.ReadValue());
