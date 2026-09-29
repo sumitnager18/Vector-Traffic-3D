@@ -39,10 +39,17 @@ namespace VectorTraffic3D.Board
         public void SetRoadGraph(RouteGraph graph)
         {
             RoadGraph = graph ?? new RouteGraph();
+            foreach (var exit in Exits.Keys.ToArray())
+            {
+                if (RoadGraph.TryGetNodeAt(exit, out var node))
+                    node.Type = RoadNodeType.Exit;
+            }
         }
 
         public int AddRoadNode(GridPosition position, RoadNodeType type = RoadNodeType.Normal)
         {
+            if (Exits.ContainsKey(position))
+                type = RoadNodeType.Exit;
             return RoadGraph.AddNode(position, type);
         }
 
