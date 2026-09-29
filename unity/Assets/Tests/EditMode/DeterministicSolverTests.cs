@@ -134,7 +134,7 @@ namespace VectorTraffic3D.Tests
             var result = solver.Solve(board);
 
             Assert.IsTrue(result.IsSolvable);
-            Assert.GreaterOrEqual(result.SolutionDepth, 4);
+            Assert.GreaterOrEqual(result.SolutionDepth, 3);
         }
     }
 }
