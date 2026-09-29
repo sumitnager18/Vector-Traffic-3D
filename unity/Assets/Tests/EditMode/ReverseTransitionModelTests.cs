@@ -3,6 +3,7 @@ using VectorTraffic3D.Board;
 using VectorTraffic3D.Core;
 using VectorTraffic3D.Vehicles;
 using VectorTraffic3D.Generation;
+using VectorTraffic3D.Puzzle;
 
 namespace VectorTraffic3D.Tests
 {
@@ -20,7 +21,7 @@ namespace VectorTraffic3D.Tests
                 Direction.Right, Direction.Right, 1));
 
             var target = start.DeepClone();
-            Assert.IsTrue(Puzzle.MoveValidator.TryExecuteStep(
+            Assert.IsTrue(MoveValidator.TryExecuteStep(
                 target, 1, Direction.Right, out _, out _));
 
             Assert.IsTrue(ReverseTransitionModel.TryUndoMovement(
