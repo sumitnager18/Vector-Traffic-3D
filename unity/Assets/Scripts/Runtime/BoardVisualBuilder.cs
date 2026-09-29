@@ -63,19 +63,8 @@ namespace VectorTraffic3D.Runtime
         {
             foreach (var gate in board.Gates.Values)
             {
-                var root = new GameObject($"VectorGate_{gate.Id}");
-                root.transform.SetParent(_root, false);
-                root.transform.position = _mapper.ToWorld(gate.Position, .15f);
-
-                var beam = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                beam.name = "GateBeam";
-                beam.transform.SetParent(root.transform, false);
-                beam.transform.localScale = new Vector3(.12f, .18f, _mapper.CellSize * .78f);
-                beam.transform.localRotation = Quaternion.Euler(
-                    0f, WorldYaw(gate.AllowedDirection), 0f);
-                beam.GetComponent<Renderer>().material =
-                    MakeMaterial(new Color(.8f, .25f, .9f));
-                Object.Destroy(beam.GetComponent<Collider>());
+                var view = VectorGateView.Create(_root, gate.Id, _mapper.ToWorld(gate.Position, .15f));
+                view.Refresh(gate.AllowedDirection);
             }
         }
 
