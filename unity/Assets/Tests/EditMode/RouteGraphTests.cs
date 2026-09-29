@@ -79,8 +79,8 @@ namespace VectorTraffic3D.Tests
 
             var result = MoveValidator.GetLegalStepDirections(board, 1);
 
-            Assert.Contains(Direction.Up, result);
-            Assert.IsFalse(result.Contains(Direction.Right));
+            CollectionAssert.Contains(result, Direction.Up);
+            CollectionAssert.DoesNotContain(result, Direction.Right);
         }
 
         [Test]
@@ -104,7 +104,7 @@ namespace VectorTraffic3D.Tests
 
             var result = MoveValidator.GetLegalStepDirections(board, 1);
 
-            Assert.IsFalse(result.Contains(Direction.Up));
+            CollectionAssert.DoesNotContain(result, Direction.Up);
         }
 
         [Test]
