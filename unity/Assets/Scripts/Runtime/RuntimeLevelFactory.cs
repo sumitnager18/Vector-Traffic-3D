@@ -51,7 +51,7 @@ namespace VectorTraffic3D.Runtime
                 new GridPosition(4, mid - 2), Direction.Up, Direction.Up, 1));
             board.AddVehicle(new VehicleState(3, VehicleType.Hatchback,
                 new GridPosition(3, mid + 2), Direction.Down, Direction.Down, 2));
-            board.AddGate(new VectorGate(1, new GridPosition(width / 2, mid),
+            board.AddGate(new VectorGate(1, new GridPosition(width - 2, mid),
                 Direction.Right));
             return board;
         }
