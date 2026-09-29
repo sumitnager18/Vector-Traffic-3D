@@ -1,9 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using VectorTraffic3D.Board;
 using VectorTraffic3D.Core;
-using VectorTraffic3D.Gates;
+using VectorTraffic3D.Routing;
 using VectorTraffic3D.Vehicles;
 
 namespace VectorTraffic3D.Puzzle
@@ -16,26 +15,57 @@ namespace VectorTraffic3D.Puzzle
         BlockedByObstacle,
         BlockedByGate,
         BlockedByBoundary,
+        BlockedByRoad,
+        InvalidRoute,
         DestinationMismatch,
         VehicleAlreadyExited,
         VehicleNotFound
     }
 
     /// <summary>
-    /// Authoritative movement and exit validation for Vector Traffic 3D.
-    /// Operates strictly on the COMPLETE multi-cell vehicle footprint at every step.
-    /// Never checks only the head cell.
+    /// Authoritative movement contract for gameplay and solver.
+    /// Every transition validates the complete multi-cell footprint.
+    /// When a RouteGraph exists, it is authoritative for legal head transitions.
     /// </summary>
     public static class MoveValidator
     {
-        /// <summary>
-        /// Validates whether a vehicle can advance a single discrete step forward along its vector.
-        /// Inspects EVERY cell of the candidate footprint against boundaries, obstacles, gates, and other vehicles.
-        /// </summary>
         public static MoveResult ValidateSingleStep(
             BoardState board,
             OccupancySystem occupancy,
             int vehicleId,
+            out GridPosition[] candidateFootprint,
+            out int blockedCellIndex,
+            out GridPosition blockedCellPos)
+        {
+            if (!board.Vehicles.TryGetValue(vehicleId, out var vehicle))
+            {
+                candidateFootprint = Array.Empty<GridPosition>();
+                blockedCellIndex = -1;
+                blockedCellPos = default;
+                return MoveResult.VehicleNotFound;
+            }
+
+            return ValidateStep(
+                board,
+                occupancy,
+                vehicleId,
+                vehicle.CurrentVector,
+                out candidateFootprint,
+                out blockedCellIndex,
+                out blockedCellPos);
+        }
+
+        /// <summary>
+        /// Validates one logical head transition in the requested direction.
+        /// A turn is legal only when the route graph exposes that outgoing direction.
+        /// The candidate vehicle orientation becomes the travel direction, so the entire
+        /// footprint is re-evaluated in the new orientation.
+        /// </summary>
+        public static MoveResult ValidateStep(
+            BoardState board,
+            OccupancySystem occupancy,
+            int vehicleId,
+            Direction travelDirection,
             out GridPosition[] candidateFootprint,
             out int blockedCellIndex,
             out GridPosition blockedCellPos)
@@ -50,34 +80,38 @@ namespace VectorTraffic3D.Puzzle
             if (vehicle.IsExited)
                 return MoveResult.VehicleAlreadyExited;
 
-            var travelVector = vehicle.CurrentVector;
-            var newHeadPos = vehicle.HeadPosition.Offset(travelVector, 1);
+            if (travelDirection == Direction.None)
+                return MoveResult.InvalidRoute;
 
-            // Compute candidate footprint for entire vehicle body
-            candidateFootprint = VehicleFootprint.CalculateOccupiedCells(newHeadPos, vehicle.Orientation, vehicle.Length);
+            if (!RouteResolver.TryGetNextPosition(board, vehicle, travelDirection, out var newHeadPos))
+                return MoveResult.InvalidRoute;
 
-            // Check if head is entering an exit
-            bool headAtExit = board.Exits.TryGetValue(newHeadPos, out int exitDestId);
+            var candidate = VehicleFootprint.CalculateOccupiedCells(
+                newHeadPos,
+                travelDirection,
+                vehicle.Length);
 
-            // Validate EVERY occupied cell in candidate footprint
-            for (int i = 0; i < candidateFootprint.Length; i++)
+            candidateFootprint = candidate;
+
+            bool headAtExit = board.Exits.TryGetValue(newHeadPos, out int exitDestinationId);
+
+            for (int i = 0; i < candidate.Length; i++)
             {
-                var cell = candidateFootprint[i];
+                var cell = candidate[i];
 
-                // If this is the head cell and it reached an exit
                 if (i == 0 && headAtExit)
                 {
-                    if (vehicle.DestinationId != 0 && exitDestId != 0 && vehicle.DestinationId != exitDestId)
+                    if (vehicle.DestinationId != 0 &&
+                        exitDestinationId != 0 &&
+                        vehicle.DestinationId != exitDestinationId)
                     {
                         blockedCellIndex = 0;
                         blockedCellPos = cell;
                         return MoveResult.DestinationMismatch;
                     }
-                    // Head at valid exit portal; continue checking remaining trailing cells
                     continue;
                 }
 
-                // 1. Boundary check on this footprint cell
                 if (!occupancy.IsInBounds(cell))
                 {
                     blockedCellIndex = i;
@@ -85,7 +119,6 @@ namespace VectorTraffic3D.Puzzle
                     return MoveResult.BlockedByBoundary;
                 }
 
-                // 2. Static Obstacle check
                 if (board.Obstacles.Contains(cell))
                 {
                     blockedCellIndex = i;
@@ -93,24 +126,23 @@ namespace VectorTraffic3D.Puzzle
                     return MoveResult.BlockedByObstacle;
                 }
 
-                // 3. Vector Gate check
-                foreach (var gate in board.Gates.Values)
+                if (board.HasRoadNetwork && !board.RoadGraph.IsConnected(cell))
                 {
-                    if (gate.Position == cell)
-                    {
-                        if (gate.AllowedDirection != travelVector)
-                        {
-                            blockedCellIndex = i;
-                            blockedCellPos = cell;
-                            return MoveResult.BlockedByGate;
-                        }
-                    }
+                    blockedCellIndex = i;
+                    blockedCellPos = cell;
+                    return MoveResult.BlockedByRoad;
                 }
 
-                // 4. Vehicle collision check:
-                // Collides if occupied by ANOTHER vehicle (not by this vehicle's own current cells)
-                var currentOccupant = occupancy.GetCell(cell).OccupyingVehicleId;
-                if (currentOccupant.HasValue && currentOccupant.Value != vehicle.Id)
+                if (board.Gates.TryGetValue(GetGateIdAt(board, cell), out var gate) &&
+                    gate.AllowedDirection != travelDirection)
+                {
+                    blockedCellIndex = i;
+                    blockedCellPos = cell;
+                    return MoveResult.BlockedByGate;
+                }
+
+                var occupant = occupancy.GetCell(cell).OccupyingVehicleId;
+                if (occupant.HasValue && occupant.Value != vehicle.Id)
                 {
                     blockedCellIndex = i;
                     blockedCellPos = cell;
@@ -122,12 +154,73 @@ namespace VectorTraffic3D.Puzzle
         }
 
         /// <summary>
-        /// Validates whether a vehicle has a completely clear, unobstructed route to travel
-        /// and fully exit the board.
-        /// A vehicle is NOT considered exited merely because its head reaches an exit cell;
-        /// the entire footprint of length L must clear through the exit portal without any collision
-        /// at any intermediate step.
+        /// Returns every legal one-cell direction from the vehicle's current head.
         /// </summary>
+        public static IReadOnlyList<Direction> GetLegalStepDirections(BoardState board, int vehicleId)
+        {
+            if (!board.Vehicles.TryGetValue(vehicleId, out var vehicle) || vehicle.IsExited)
+                return Array.Empty<Direction>();
+
+            var occupancy = new OccupancySystem(board.Width, board.Height);
+            if (!occupancy.TryRebuildOccupancy(board.Vehicles.Values, board.Gates.Values, out _))
+                return Array.Empty<Direction>();
+
+            var legal = new List<Direction>();
+            foreach (var direction in RouteResolver.GetLegalDirections(board, vehicle))
+            {
+                var result = ValidateStep(board, occupancy, vehicleId, direction, out _, out _, out _);
+                if (result == MoveResult.ValidAdvance)
+                    legal.Add(direction);
+            }
+
+            return legal;
+        }
+
+        /// <summary>
+        /// Commits exactly one validated movement transition.
+        /// No visual animation or physics is involved in this logical operation.
+        /// </summary>
+        public static bool TryExecuteStep(
+            BoardState board,
+            int vehicleId,
+            Direction travelDirection,
+            out GridPosition[] candidateFootprint,
+            out MoveResult result)
+        {
+            candidateFootprint = Array.Empty<GridPosition>();
+
+            if (!board.Vehicles.ContainsKey(vehicleId))
+            {
+                result = MoveResult.VehicleNotFound;
+                return false;
+            }
+
+            var occupancy = new OccupancySystem(board.Width, board.Height);
+            if (!occupancy.TryRebuildOccupancy(board.Vehicles.Values, board.Gates.Values, out _))
+            {
+                result = MoveResult.BlockedByVehicle;
+                return false;
+            }
+
+            result = ValidateStep(
+                board,
+                occupancy,
+                vehicleId,
+                travelDirection,
+                out candidateFootprint,
+                out _,
+                out _);
+
+            if (result != MoveResult.ValidAdvance)
+                return false;
+
+            var vehicle = board.Vehicles[vehicleId];
+            vehicle.HeadPosition = candidateFootprint[0];
+            vehicle.Orientation = travelDirection;
+            vehicle.CurrentVector = travelDirection;
+            return true;
+        }
+
         public static bool CanCompleteExit(
             BoardState board,
             int vehicleId,
@@ -149,69 +242,35 @@ namespace VectorTraffic3D.Puzzle
                 return false;
             }
 
-            // Create working simulator copy of board to advance step-by-step
             var simBoard = board.DeepClone();
             var occupancy = new OccupancySystem(simBoard.Width, simBoard.Height);
-            if (!occupancy.TryRebuildOccupancy(simBoard.Vehicles.Values, simBoard.Gates.Values, out _))
+
+            if (!occupancy.TryRebuildOccupancy(
+                    simBoard.Vehicles.Values,
+                    simBoard.Gates.Values,
+                    out _))
             {
                 failureReason = MoveResult.BlockedByVehicle;
                 return false;
             }
 
             var simVehicle = simBoard.Vehicles[vehicleId];
-            int maxTravelSteps = simBoard.Width + simBoard.Height + simVehicle.Length + 4;
+
+            // Phase 1: reach the exit portal using the current logical route.
+            bool reachedExit = simBoard.Exits.ContainsKey(simVehicle.HeadPosition);
+            int maxTravelSteps = simBoard.Width + simBoard.Height + simVehicle.Length + 8;
             int steps = 0;
-            bool reachedExit = false;
-            GridPosition exitPos = default;
-            int exitDestId = 0;
 
-            // Phase 1: Advance towards and reach the exit portal
-            while (steps++ < maxTravelSteps && !reachedExit)
+            while (!reachedExit && steps++ < maxTravelSteps)
             {
-                var nextHead = simVehicle.HeadPosition.Offset(simVehicle.CurrentVector, 1);
+                var stepResult = ValidateSingleStep(
+                    simBoard,
+                    occupancy,
+                    simVehicle.Id,
+                    out var candidate,
+                    out _,
+                    out _);
 
-                if (simBoard.Exits.TryGetValue(nextHead, out exitDestId))
-                {
-                    if (simVehicle.DestinationId != 0 && exitDestId != 0 && simVehicle.DestinationId != exitDestId)
-                    {
-                        failureReason = MoveResult.DestinationMismatch;
-                        return false;
-                    }
-
-                    // Check if head entering exit is clear
-                    var candidateFootprint = VehicleFootprint.CalculateOccupiedCells(nextHead, simVehicle.Orientation, simVehicle.Length);
-                    for (int i = 0; i < candidateFootprint.Length; i++)
-                    {
-                        var cell = candidateFootprint[i];
-                        if (i == 0) continue; // Head is at exit portal
-
-                        if (!occupancy.IsInBounds(cell))
-                        {
-                            failureReason = MoveResult.BlockedByBoundary;
-                            return false;
-                        }
-                        if (simBoard.Obstacles.Contains(cell))
-                        {
-                            failureReason = MoveResult.BlockedByObstacle;
-                            return false;
-                        }
-                        var occ = occupancy.GetCell(cell).OccupyingVehicleId;
-                        if (occ.HasValue && occ.Value != simVehicle.Id)
-                        {
-                            failureReason = MoveResult.BlockedByVehicle;
-                            return false;
-                        }
-                    }
-
-                    stepFootprints.Add(candidateFootprint);
-                    simVehicle.HeadPosition = nextHead;
-                    exitPos = nextHead;
-                    reachedExit = true;
-                    break;
-                }
-
-                // Normal advance step
-                var stepResult = ValidateSingleStep(simBoard, occupancy, simVehicle.Id, out var candidate, out _, out _);
                 if (stepResult != MoveResult.ValidAdvance)
                 {
                     failureReason = stepResult;
@@ -220,7 +279,12 @@ namespace VectorTraffic3D.Puzzle
 
                 stepFootprints.Add(candidate);
                 simVehicle.HeadPosition = candidate[0];
-                occupancy.TryRebuildOccupancy(simBoard.Vehicles.Values, simBoard.Gates.Values, out _);
+                occupancy.TryRebuildOccupancy(
+                    simBoard.Vehicles.Values,
+                    simBoard.Gates.Values,
+                    out _);
+
+                reachedExit = simBoard.Exits.ContainsKey(simVehicle.HeadPosition);
             }
 
             if (!reachedExit)
@@ -229,31 +293,61 @@ namespace VectorTraffic3D.Puzzle
                 return false;
             }
 
-            // Phase 2: Complete exit clearance
-            // For a vehicle of length L, its trailing L - 1 cells must clear through the exit portal.
-            // At each clearing step k from 1 to L:
-            for (int k = 1; k < simVehicle.Length; k++)
+            int destinationId = simBoard.Exits[simVehicle.HeadPosition];
+            if (simVehicle.DestinationId != 0 &&
+                destinationId != 0 &&
+                simVehicle.DestinationId != destinationId)
+            {
+                failureReason = MoveResult.DestinationMismatch;
+                return false;
+            }
+
+            // Phase 2: clear the complete footprint through the exit portal.
+            // Every intermediate in-board body cell is still checked against
+            // obstacles, gates and other vehicles.
+            for (int k = 0; k < simVehicle.Length; k++)
             {
                 var advancedHead = simVehicle.HeadPosition.Offset(simVehicle.CurrentVector, 1);
-                var clearingFootprint = VehicleFootprint.CalculateOccupiedCells(advancedHead, simVehicle.Orientation, simVehicle.Length);
+                var clearingFootprint = VehicleFootprint.CalculateOccupiedCells(
+                    advancedHead,
+                    simVehicle.Orientation,
+                    simVehicle.Length);
 
-                // Any trailing cell still on the board must not collide with other vehicles or obstacles
-                for (int i = k; i < clearingFootprint.Length; i++)
+                for (int i = 0; i < clearingFootprint.Length; i++)
                 {
                     var cell = clearingFootprint[i];
-                    if (occupancy.IsInBounds(cell))
+
+                    // Cells outside the board are the vehicle leaving the puzzle.
+                    if (!occupancy.IsInBounds(cell))
+                        continue;
+
+                    if (simBoard.Obstacles.Contains(cell))
                     {
-                        if (simBoard.Obstacles.Contains(cell))
-                        {
-                            failureReason = MoveResult.BlockedByObstacle;
-                            return false;
-                        }
-                        var occ = occupancy.GetCell(cell).OccupyingVehicleId;
-                        if (occ.HasValue && occ.Value != simVehicle.Id)
-                        {
-                            failureReason = MoveResult.BlockedByVehicle;
-                            return false;
-                        }
+                        failureReason = MoveResult.BlockedByObstacle;
+                        return false;
+                    }
+
+                    if (simBoard.HasRoadNetwork &&
+                        !simBoard.RoadGraph.IsConnected(cell))
+                    {
+                        failureReason = MoveResult.BlockedByRoad;
+                        return false;
+                    }
+
+                    if (simBoard.Gates.TryGetValue(
+                            GetGateIdAt(simBoard, cell),
+                            out var gate) &&
+                        gate.AllowedDirection != simVehicle.CurrentVector)
+                    {
+                        failureReason = MoveResult.BlockedByGate;
+                        return false;
+                    }
+
+                    var occupant = occupancy.GetCell(cell).OccupyingVehicleId;
+                    if (occupant.HasValue && occupant.Value != simVehicle.Id)
+                    {
+                        failureReason = MoveResult.BlockedByVehicle;
+                        return false;
                     }
                 }
 
@@ -261,14 +355,9 @@ namespace VectorTraffic3D.Puzzle
                 simVehicle.HeadPosition = advancedHead;
             }
 
-            failureReason = MoveResult.ValidExitCompleted;
             return true;
         }
 
-        /// <summary>
-        /// Authoritatively executes an exit transition if legal.
-        /// Updates board state: marks vehicle as exited and clears dynamic occupancy.
-        /// </summary>
         public static bool TryExecuteExit(
             BoardState board,
             int vehicleId,
@@ -277,14 +366,28 @@ namespace VectorTraffic3D.Puzzle
         {
             trajectoryFootprints = new List<GridPosition[]>();
 
-            if (!CanCompleteExit(board, vehicleId, out trajectoryFootprints, out result))
+            if (!CanCompleteExit(
+                    board,
+                    vehicleId,
+                    out trajectoryFootprints,
+                    out result))
             {
                 return false;
             }
 
-            // Commit logical transition
             board.Vehicles[vehicleId].IsExited = true;
             return true;
+        }
+
+        private static int GetGateIdAt(BoardState board, GridPosition position)
+        {
+            foreach (var gate in board.Gates.Values)
+            {
+                if (gate.Position == position)
+                    return gate.Id;
+            }
+
+            return int.MinValue;
         }
     }
 }
