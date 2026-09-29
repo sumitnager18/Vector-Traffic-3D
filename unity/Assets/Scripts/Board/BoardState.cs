@@ -141,6 +141,82 @@ namespace VectorTraffic3D.Board
             return sb.ToString();
         }
 
+        /// <summary>
+        /// Validates static puzzle invariants before the board is handed to gameplay or a solver.
+        /// This prevents generated levels from starting with a vehicle partly off-road or
+        /// occupying an exit/obstacle illegally.
+        /// </summary>
+        public bool TryValidateStaticState(out string errorMessage)
+        {
+            errorMessage = null;
+
+            if (Width <= 0 || Height <= 0)
+            {
+                errorMessage = "Board dimensions must be positive.";
+                return false;
+            }
+
+            foreach (var exit in Exits)
+            {
+                if (exit.Key.X < 0 || exit.Key.X >= Width || exit.Key.Y < 0 || exit.Key.Y >= Height)
+                {
+                    errorMessage = $"Exit {exit.Key} is outside the board.";
+                    return false;
+                }
+
+                if (HasRoadNetwork && !RoadGraph.IsConnected(exit.Key))
+                {
+                    errorMessage = $"Exit {exit.Key} is not connected to the road graph.";
+                    return false;
+                }
+            }
+
+            foreach (var obstacle in Obstacles)
+            {
+                if (obstacle.X < 0 || obstacle.X >= Width || obstacle.Y < 0 || obstacle.Y >= Height)
+                {
+                    errorMessage = $"Obstacle {obstacle} is outside the board.";
+                    return false;
+                }
+            }
+
+            foreach (var vehicle in Vehicles.Values)
+            {
+                if (vehicle.IsExited)
+                    continue;
+
+                foreach (var cell in vehicle.GetOccupiedCells())
+                {
+                    if (cell.X < 0 || cell.X >= Width || cell.Y < 0 || cell.Y >= Height)
+                    {
+                        errorMessage = $"Vehicle {vehicle.Id} footprint is outside the board at {cell}.";
+                        return false;
+                    }
+
+                    if (Obstacles.Contains(cell))
+                    {
+                        errorMessage = $"Vehicle {vehicle.Id} overlaps obstacle at {cell}.";
+                        return false;
+                    }
+
+                    if (HasRoadNetwork && !RoadGraph.IsConnected(cell))
+                    {
+                        errorMessage = $"Vehicle {vehicle.Id} starts off-road at {cell}.";
+                        return false;
+                    }
+                }
+            }
+
+            var occupancy = new OccupancySystem(Width, Height);
+            if (!occupancy.TryRebuildOccupancy(Vehicles.Values, Gates.Values, out var occupancyError))
+            {
+                errorMessage = occupancyError;
+                return false;
+            }
+
+            return true;
+        }
+
         public string GetFullCanonicalStateHash()
         {
             return GetCanonicalStateHash() + "|R:" + (RoadGraph?.GetCanonicalTopologyHash() ?? string.Empty);
