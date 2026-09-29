@@ -32,6 +32,10 @@ namespace VectorTraffic3D.Runtime
             var width = _mapper.CellSize * .68f;
             var height = .42f;
 
+            var selectionCollider = GetComponent<BoxCollider>() ?? gameObject.AddComponent<BoxCollider>();
+            selectionCollider.center = new Vector3(0f, .45f, 0f);
+            selectionCollider.size = new Vector3(width, .9f, length);
+
             CreateCube("Body", new Vector3(width, height, length),
                 new Vector3(0f, .42f, 0f), ColorFor(state.Type), _visualRoot);
 
