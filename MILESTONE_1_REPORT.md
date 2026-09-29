@@ -66,3 +66,7 @@ Unity Test Runner: UNVERIFIED
 Android build: BLOCKED until a real Unity Android environment is available
 Procedural generator: NOT IMPLEMENTED
 Ready for M2: CONDITIONAL — after Unity compilation and test execution confirm the new routing code.
+
+## CI gate
+
+A manual GitHub Actions EditMode workflow was added at .github/workflows/unity-tests.yml using GameCI's current v4 Unity test runner. It requires Unity license/account secrets and is intentionally workflow_dispatch-only; therefore no CI result is claimed yet.
