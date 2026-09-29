@@ -72,12 +72,8 @@ namespace VectorTraffic3D.Runtime
                 _views[state.Id] = view;
             }
 
-            foreach (var gate in Board.Gates.Values)
-            {
-                var gateView = _worldRoot.GetComponentInChildren<VectorGateView>();
-                if (gateView != null && gateView.GateId == gate.Id)
-                    _gateViews[gate.Id] = gateView;
-            }
+            foreach (var gateView in _worldRoot.GetComponentsInChildren<VectorGateView>())
+                _gateViews[gateView.GateId] = gateView;
 
             _focus = new GameObject("CameraFocus").transform;
             _focus.SetParent(_worldRoot, false);
