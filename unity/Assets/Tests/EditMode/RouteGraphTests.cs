@@ -139,5 +139,45 @@ namespace VectorTraffic3D.Tests
             Assert.AreEqual(Direction.Up, vehicle.CurrentVector);
             Assert.AreEqual(new GridPosition(1, 2), vehicle.HeadPosition);
         }
+        [Test]
+        public void StaticValidation_RejectsVehicleStartingOffRoad()
+        {
+            var board = new BoardState(6, 6);
+            board.AddBidirectionalRoadSegment(
+                new GridPosition(2, 2),
+                new GridPosition(3, 2));
+
+            board.AddVehicle(new VehicleState(
+                1,
+                VehicleType.Hatchback,
+                new GridPosition(2, 2),
+                Direction.Right,
+                Direction.Right));
+
+            Assert.IsFalse(board.TryValidateStaticState(out var error));
+            StringAssert.Contains("starts off-road", error);
+        }
+
+        [Test]
+        public void StaticValidation_RejectsOverlappingVehicles()
+        {
+            var board = new BoardState(8, 8);
+            board.AddVehicle(new VehicleState(
+                1,
+                VehicleType.Hatchback,
+                new GridPosition(3, 3),
+                Direction.Right,
+                Direction.Right));
+            board.AddVehicle(new VehicleState(
+                2,
+                VehicleType.Hatchback,
+                new GridPosition(4, 3),
+                Direction.Left,
+                Direction.Left));
+
+            Assert.IsFalse(board.TryValidateStaticState(out var error));
+            StringAssert.Contains("Illegal overlap", error);
+        }
+
     }
 }
